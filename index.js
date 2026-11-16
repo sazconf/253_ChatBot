@@ -75,7 +75,39 @@ app.post("/api/chat", async (req, res) => {
 
         // Simpan bagian terakhir karena mungkin belum lengkap
         buffer = lines.pop();
+
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+
+            if (!trimmedLine) {
+                continue;
+            }
+
+            if (!trimmedLine.startsWith("data:")) {
+                continue;
+            }
+
+            const data = trimmedLine.slice(5).trim();
+
+            if (data === "[DONE]") {
+                continue;
+            }
+
+            try {
+                const json = JSON.parse(data);
+
+                const content = json.choices?.[0]?.delta?.content;
+
+                if (content) {
+                    res.write(content);
+                }
+            } catch (error) {
+                console.error("Gagal parse JSON:", error);
+            }
+        }
     }
+
+    res.end();
 });
 
 app.listen(PORT, () => {
