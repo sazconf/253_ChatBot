@@ -23,91 +23,100 @@ app.post("/api/chat", async (req, res) => {
         });
     }
 
-    const response = await fetch(
-        "https://openrouter.ai/api/v1/chat/completions",
-        {
-            method: "POST",
+    try {
+        const response = await fetch(
+            "https://openrouter.ai/api/v1/chat/completions",
+            {
+                method: "POST",
 
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`
-            },
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`
+                },
 
-            body: JSON.stringify({
-                model: "openai/gpt-4o-mini",
-                messages: messages,
+                body: JSON.stringify({
+                    model: "openai/gpt-4o-mini",
+                    messages: messages,
+                    stream: true
+                })
+            }
+        );
+
+        if (!response.ok) {
+            const errorData = await response.text();
+
+            console.error("OpenRouter Error:", errorData);
+
+            return res.status(response.status).json({
+                error: errorData
+            });
+        }
+
+        // Header untuk streaming
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+                break;
+            }
+
+            buffer += decoder.decode(value, {
                 stream: true
-            })
-        }
-    );
+            });
 
-    if (!response.ok) {
-        const errorData = await response.text();
+            const lines = buffer.split("\n");
 
-        console.error("OpenRouter Error:", errorData);
+            // Simpan bagian terakhir karena mungkin belum lengkap
+            buffer = lines.pop();
 
-        return res.status(response.status).json({
-            error: errorData
-        });
-    }
+            for (const line of lines) {
+                const trimmedLine = line.trim();
 
-    // Header untuk streaming
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-            break;
-        }
-
-        buffer += decoder.decode(value, {
-            stream: true
-        });
-
-        const lines = buffer.split("\n");
-
-        // Simpan bagian terakhir karena mungkin belum lengkap
-        buffer = lines.pop();
-
-        for (const line of lines) {
-            const trimmedLine = line.trim();
-
-            if (!trimmedLine) {
-                continue;
-            }
-
-            if (!trimmedLine.startsWith("data:")) {
-                continue;
-            }
-
-            const data = trimmedLine.slice(5).trim();
-
-            if (data === "[DONE]") {
-                continue;
-            }
-
-            try {
-                const json = JSON.parse(data);
-
-                const content = json.choices?.[0]?.delta?.content;
-
-                if (content) {
-                    res.write(content);
+                if (!trimmedLine) {
+                    continue;
                 }
-            } catch (error) {
-                console.error("Gagal parse JSON:", error);
+
+                if (!trimmedLine.startsWith("data:")) {
+                    continue;
+                }
+
+                const data = trimmedLine.slice(5).trim();
+
+                if (data === "[DONE]") {
+                    continue;
+                }
+
+                try {
+                    const json = JSON.parse(data);
+
+                    const content =
+                        json.choices?.[0]?.delta?.content;
+
+                    if (content) {
+                        res.write(`data: ${JSON.stringify(content)}\n\n`);
+                    }
+                } catch (error) {
+                    console.error(
+                        "Gagal parsing streaming data:",
+                        error
+                    );
+                }
             }
         }
-    }
 
-    res.end();
+        res.write("data: [DONE]\n\n");
+        res.end();
+    } catch (error) {
+        console.error("Server Error:", error);
+    }
 });
 
 app.listen(PORT, () => {
